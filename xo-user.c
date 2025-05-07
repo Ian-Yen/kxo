@@ -95,6 +95,25 @@ void output_time(void)
     printf("Current time: %s\n", buffer);
 }
 
+static char *output_board(const char *table)
+{
+    int i = 4, k = 0;
+    puts("\n");
+
+    while (i--) {
+        for (int j = 0; j < (BOARD_SIZE << 1) - 1 && k < N_GRIDS; j++) {
+            putchar(j & 1 ? '|' : table[k++]);
+        }
+        putchar('\n');
+        for (int j = 0; j < (BOARD_SIZE << 1) - 1; j++)
+            putchar('-');
+        putchar('\n');
+    }
+
+
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     if (!status_check())
@@ -104,7 +123,7 @@ int main(int argc, char *argv[])
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
-    char display_buf[DRAWBUFFER_SIZE];
+    char display_buf[N_GRIDS];
 
     fd_set readset;
     int device_fd = open(XO_DEVICE_FILE, O_RDONLY);
@@ -129,8 +148,8 @@ int main(int argc, char *argv[])
         } else if (read_attr && FD_ISSET(device_fd, &readset)) {
             FD_CLR(device_fd, &readset);
             printf("\033[H\033[J"); /* ASCII escape code to clear the screen */
-            read(device_fd, display_buf, DRAWBUFFER_SIZE);
-            printf("%s", display_buf);
+            read(device_fd, display_buf, N_GRIDS);
+            output_board(display_buf);
             output_time();
         }
     }
