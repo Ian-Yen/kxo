@@ -3,6 +3,7 @@
 #include <linux/cdev.h>
 #include <linux/circ_buf.h>
 #include <linux/interrupt.h>
+#include <linux/ioctl.h>
 #include <linux/kfifo.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -14,6 +15,7 @@
 #include "game.h"
 #include "mcts.h"
 #include "negamax.h"
+#include "record.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("National Cheng Kung University, Taiwan");
@@ -30,6 +32,9 @@ MODULE_DESCRIPTION("In-kernel Tic-Tac-Toe game engine");
 
 #define NR_KMLDRV 1
 
+#define IOCTL_GET_BOARD 0
+#define IOCTL_GET_MOVE 1
+
 static int delay = 100; /* time (in ms) to generate an event */
 
 /* Declare kernel module attribute for sysfs */
@@ -42,6 +47,8 @@ struct kxo_attr {
 };
 
 static struct kxo_attr attr_obj;
+
+long record_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 static ssize_t kxo_state_show(struct device *dev,
                               struct device_attribute *attr,
@@ -190,8 +197,10 @@ static void ai_one_work_func(struct work_struct *w)
 
     smp_mb();
 
-    if (move != -1)
+    if (move != -1) {
         WRITE_ONCE(table[move], 'O');
+        record(move);
+    }
 
     WRITE_ONCE(turn, 'X');
     WRITE_ONCE(finish, 1);
@@ -224,8 +233,10 @@ static void ai_two_work_func(struct work_struct *w)
 
     smp_mb();
 
-    if (move != -1)
+    if (move != -1) {
         WRITE_ONCE(table[move], 'X');
+        record(move);
+    }
 
     WRITE_ONCE(turn, 'O');
     WRITE_ONCE(finish, 1);
@@ -342,6 +353,7 @@ static void timer_handler(struct timer_list *__timer)
         if (attr_obj.end == '0') {
             memset(table, ' ',
                    N_GRIDS); /* Reset the table so the game restart */
+            record_init();
             mod_timer(&timer, jiffies + msecs_to_jiffies(delay));
         }
 
@@ -429,13 +441,34 @@ static int kxo_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
-static const struct file_operations kxo_fops = {
-    .read = kxo_read,
-    .llseek = no_llseek,
-    .open = kxo_open,
-    .release = kxo_release,
-    .owner = THIS_MODULE,
-};
+long record_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+    switch (cmd) {
+    case IOCTL_GET_BOARD:
+        uint64_t board[16] = {0};
+        memcpy(board, record_get_board(), sizeof(uint64_t) * 16);
+        if (copy_to_user((uint64_t __user *) arg, board, sizeof(uint64_t) * 16))
+            return -EINVAL;
+        break;
+    case IOCTL_GET_MOVE:
+        int Turn[16] = {0};
+        memcpy(Turn, record_get_move(), sizeof(int) * 16);
+        if (copy_to_user((int __user *) arg, Turn, sizeof(int) * 16))
+            return -EINVAL;
+        break;
+    default:
+        return -EINVAL;
+    }
+    return 0;
+}
+
+
+static const struct file_operations kxo_fops = {.read = kxo_read,
+                                                .llseek = no_llseek,
+                                                .open = kxo_open,
+                                                .release = kxo_release,
+                                                .owner = THIS_MODULE,
+                                                .unlocked_ioctl = record_ioctl};
 
 static int __init kxo_init(void)
 {
@@ -503,6 +536,7 @@ static int __init kxo_init(void)
     negamax_init();
     mcts_init();
     memset(table, ' ', N_GRIDS);
+    record_init_all();
     turn = 'O';
     finish = 1;
 

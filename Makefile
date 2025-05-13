@@ -1,8 +1,9 @@
+export BTF_FILE=/sys/kernel/btf/vmlinux
 TARGET = kxo
-kxo-objs = main.o game.o xoroshiro.o mcts.o negamax.o zobrist.o
+kxo-objs = main.o game.o xoroshiro.o mcts.o negamax.o zobrist.o record.o
 obj-m := $(TARGET).o
 
-ccflags-y := -std=gnu99 -Wno-declaration-after-statement
+ccflags-y := -std=gnu99
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 

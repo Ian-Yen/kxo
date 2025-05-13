@@ -1,9 +1,11 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
 #include <time.h>
@@ -14,6 +16,9 @@
 #define XO_STATUS_FILE "/sys/module/kxo/initstate"
 #define XO_DEVICE_FILE "/dev/kxo"
 #define XO_DEVICE_ATTR_FILE "/sys/class/kxo/kxo/kxo_state"
+
+#define IOCTL_READ_BOARD 0
+#define IOCTL_READ_TURN 1
 
 static bool status_check(void)
 {
@@ -54,7 +59,35 @@ static void raw_mode_enable(void)
 
 static bool read_attr, end_attr;
 
-static void listen_keyboard_handler(void)
+static void change_board(int n)
+{
+    int row = (n >> 2);
+    int column = n % 4;
+    printf("%c%d", row + 'a', column);
+}
+
+void output_record(int device_fd)
+{
+    uint64_t board[16] = {0};
+    ioctl(device_fd, IOCTL_READ_BOARD, &board);
+    int turn[16] = {0};
+    ioctl(device_fd, IOCTL_READ_TURN, &turn);
+    for (int i = 0; i < 16; i++) {
+        if (!turn[i])
+            break;
+        // printf("%ld", board[i]);
+        // printf("%d\n", turn[i]);
+        for (int j = 0; j < turn[i]; j++) {
+            change_board((int) (board[i] & 15));
+            if (j + 1 < turn[i])
+                printf("->");
+            board[i] = (board[i] >> 4);
+        }
+        printf("\n");
+    }
+}
+
+static void listen_keyboard_handler(int device_fd)
 {
     int attr_fd = open(XO_DEVICE_ATTR_FILE, O_RDWR);
     char input;
@@ -67,8 +100,10 @@ static void listen_keyboard_handler(void)
             buf[0] = (buf[0] - '0') ? '0' : '1';
             read_attr ^= 1;
             write(attr_fd, buf, 6);
-            if (!read_attr)
+            if (!read_attr) {
                 printf("Stopping to display the chess board...\n");
+                output_record(device_fd);
+            }
             break;
         case 17: /* Ctrl-Q */
             read(attr_fd, buf, 6);
@@ -145,7 +180,7 @@ int main(int argc, char *argv[])
 
         if (FD_ISSET(STDIN_FILENO, &readset)) {
             FD_CLR(STDIN_FILENO, &readset);
-            listen_keyboard_handler();
+            listen_keyboard_handler(device_fd);
         } else if (read_attr && FD_ISSET(device_fd, &readset)) {
             FD_CLR(device_fd, &readset);
             printf("\033[H\033[J"); /* ASCII escape code to clear the screen */
@@ -156,6 +191,9 @@ int main(int argc, char *argv[])
     }
 
     raw_mode_disable();
+
+    output_record(device_fd);
+
     fcntl(STDIN_FILENO, F_SETFL, flags);
 
     close(device_fd);
